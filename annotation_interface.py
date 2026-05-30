@@ -223,7 +223,7 @@ def main():
                 pass
 
     # ROW 1: Navigation (full width) - compact single line
-    nav_col1, nav_col2, nav_col3, nav_col4, nav_col5, nav_col6 = st.columns([0.8, 1.5, 0.8, 2, 2.5, 1])
+    nav_col1, nav_col2, nav_col3, nav_col4, nav_col5, nav_col6 = st.columns([0.8, 1.5, 0.8, 2.5, 1.2, 2])
 
     with nav_col1:
         if st.button("← Previous", use_container_width=True):
@@ -268,31 +268,33 @@ def main():
             st.rerun()
 
     with nav_col6:
-        # Export button in the same row
-        export_clicked = st.button("💾 Export to CSV", type="primary")
+        # Direct download button - prepares and downloads in one step
+        export_df = df.copy()
+        export_df['metaphor_annotate'] = ""
+        export_df['convo_history_annotate'] = ""
+        export_df['conversation_highlights'] = ""
 
-    # Handle export outside of column context to avoid layout issues
-    if export_clicked:
-        with st.spinner("Saving..."):
-            export_df = df.copy()
-            export_df['metaphor_annotate'] = ""
-            export_df['convo_history_annotate'] = ""
-            export_df['conversation_highlights'] = ""
+        for idx, annotation in st.session_state.metaphor_annotation.items():
+            if idx < len(export_df):
+                export_df.at[idx, 'metaphor_annotate'] = annotation
 
-            for idx, annotation in st.session_state.metaphor_annotation.items():
-                if idx < len(export_df):
-                    export_df.at[idx, 'metaphor_annotate'] = annotation
+        for idx, annotation in st.session_state.convo_annotation.items():
+            if idx < len(export_df):
+                export_df.at[idx, 'convo_history_annotate'] = annotation
 
-            for idx, annotation in st.session_state.convo_annotation.items():
-                if idx < len(export_df):
-                    export_df.at[idx, 'convo_history_annotate'] = annotation
+        for idx, highlights in st.session_state.highlights.items():
+            if idx < len(export_df):
+                export_df.at[idx, 'conversation_highlights'] = json.dumps(highlights)
 
-            for idx, highlights in st.session_state.highlights.items():
-                if idx < len(export_df):
-                    export_df.at[idx, 'conversation_highlights'] = json.dumps(highlights)
+        csv_data = export_df.to_csv(index=False)
 
-            export_df.to_csv(output_file, index=False)
-        st.toast(f"Saved to {output_file}!", icon="✅")
+        st.download_button(
+            label="💾 Download CSV",
+            data=csv_data,
+            file_name=output_file,
+            mime="text/csv",
+            type="primary"
+        )
 
     st.markdown("---")
 
