@@ -128,6 +128,14 @@ def main():
                     st.session_state.uploaded_file_buffer = file_content
                     st.session_state.last_uploaded_hash = file_hash
                     st.session_state.using_uploaded = True
+
+                    # Clear previous annotations when loading new file
+                    st.session_state.metaphor_annotation = {}
+                    st.session_state.convo_annotation = {}
+                    st.session_state.highlights = {}
+                    st.session_state.current_idx = 0
+                    st.session_state.active_highlight_msg = None
+
                     st.success(f"Loaded {len(uploaded_df)} records!")
                     st.rerun()
                 except Exception as e:
@@ -143,6 +151,14 @@ def main():
                 st.session_state.last_uploaded_hash = None
                 if 'uploaded_df' in st.session_state:
                     del st.session_state.uploaded_df
+
+                # Clear annotations when resetting
+                st.session_state.metaphor_annotation = {}
+                st.session_state.convo_annotation = {}
+                st.session_state.highlights = {}
+                st.session_state.current_idx = 0
+                st.session_state.active_highlight_msg = None
+
                 st.rerun()
         else:
             st.info("Using: annotated_data.csv")
