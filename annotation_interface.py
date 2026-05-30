@@ -103,6 +103,12 @@ def main():
         st.session_state.highlights = {}  # {original_idx: [{msg_idx, text, start, end}, ...]}
     if 'last_uploaded_hash' not in st.session_state:
         st.session_state.last_uploaded_hash = None
+    if 'starred' not in st.session_state:
+        st.session_state.starred = set()  # Set of original_idx that are starred
+    if 'show_starred_only' not in st.session_state:
+        st.session_state.show_starred_only = False
+    if 'starred_loaded' not in st.session_state:
+        st.session_state.starred_loaded = False
 
     # Sidebar
     with st.sidebar:
@@ -135,6 +141,9 @@ def main():
                     st.session_state.highlights = {}
                     st.session_state.current_idx = 0
                     st.session_state.active_highlight_msg = None
+                    st.session_state.starred = set()
+                    st.session_state.show_starred_only = False
+                    st.session_state.starred_loaded = False
 
                     st.success(f"Loaded {len(uploaded_df)} records!")
                     st.rerun()
@@ -158,6 +167,9 @@ def main():
                 st.session_state.highlights = {}
                 st.session_state.current_idx = 0
                 st.session_state.active_highlight_msg = None
+                st.session_state.starred = set()
+                st.session_state.show_starred_only = False
+                st.session_state.starred_loaded = False
 
                 st.rerun()
         else:
@@ -192,8 +204,20 @@ def main():
     # Load highlights lazily - only for current record when needed
     # Don't load all highlights on startup for large datasets
 
-    # Handle filtering for annotated records only - use fast function
-    if st.session_state.get('show_annotated_only', False):
+    # Handle filtering for annotated or starred records
+    if st.session_state.get('show_starred_only', False):
+        # Filter to show only starred records
+        if len(st.session_state.starred) == 0:
+            st.sidebar.warning("No starred records found. Showing all.")
+            st.session_state.show_starred_only = False
+            filtered_df = df
+            index_mapping = list(range(len(df)))
+        else:
+            starred_indices = sorted(list(st.session_state.starred))
+            filtered_df = df.iloc[starred_indices].reset_index(drop=True)
+            index_mapping = starred_indices
+            st.sidebar.markdown(f"**Showing:** {len(starred_indices)} starred of {len(df)} total")
+    elif st.session_state.get('show_annotated_only', False):
         # Use fast set-based function to get annotated indices (includes highlights)
         annotated_indices = get_annotated_indices_fast(
             st.session_state.metaphor_annotation,
@@ -238,31 +262,39 @@ def main():
             except json.JSONDecodeError:
                 pass
 
-    # ROW 1: Navigation (full width) - compact single line
-    nav_col1, nav_col2, nav_col3, nav_col4, nav_col5, nav_col6 = st.columns([0.8, 1.5, 0.8, 2.5, 1.2, 2])
+    # Load starred status from CSV if column exists and not already loaded
+    if 'starred' in df.columns and not st.session_state.get('starred_loaded', False):
+        for idx, row_data in df.iterrows():
+            starred_val = row_data.get('starred', False)
+            if starred_val and (starred_val == True or str(starred_val).lower() in ('true', '1', 'yes')):
+                st.session_state.starred.add(idx)
+        st.session_state.starred_loaded = True
+
+    # ROW 1: Navigation (full width) - compact single line with all controls
+    nav_col1, nav_col2, nav_col3, nav_col4, nav_col5, nav_col6, nav_col7, nav_col8 = st.columns([0.5, 0.8, 0.5, 1.5, 2.5, 1.2, 0.5, 1.5])
 
     with nav_col1:
-        if st.button("← Previous", use_container_width=True):
+        if st.button("←", use_container_width=True):
             st.session_state.current_idx = max(0, filtered_idx - 1)
             st.rerun()
 
     with nav_col2:
-        # Smaller, unbold record counter - show filtered position
-        show_filtered = st.session_state.get('show_annotated_only', False)
+        # Compact record counter
+        show_filtered = st.session_state.get('show_annotated_only', False) or st.session_state.get('show_starred_only', False)
         if show_filtered:
-            counter_text = f"{filtered_idx + 1} of {len(filtered_df)} annotated"
+            counter_text = f"{filtered_idx + 1}/{len(filtered_df)}"
         else:
-            counter_text = f"{filtered_idx + 1} of {len(filtered_df)}"
-        st.markdown(f"<p style='text-align: center; margin: 0; color: black; font-size: 0.9em; font-weight: normal; padding-top: 6px;'>{counter_text}</p>", unsafe_allow_html=True)
+            counter_text = f"{filtered_idx + 1}/{len(filtered_df)}"
+        st.markdown(f"<p style='text-align: center; margin: 0; color: black; font-size: 0.85em; font-weight: normal; padding-top: 6px;'>{counter_text}</p>", unsafe_allow_html=True)
 
     with nav_col3:
-        if st.button("Next →", use_container_width=True):
+        if st.button("→", use_container_width=True):
             st.session_state.current_idx = min(len(filtered_df) - 1, filtered_idx + 1)
             st.rerun()
 
     with nav_col4:
         # Search by ResponseId - compact
-        search_id = st.text_input("Search", value="", placeholder="Search ID", label_visibility="collapsed")
+        search_id = st.text_input("Search", value="", placeholder="Search ResponseId", label_visibility="collapsed")
         if search_id and 'ResponseId' in df.columns:
             matching = df[df['ResponseId'] == search_id]
             if len(matching) > 0:
@@ -274,21 +306,99 @@ def main():
                     st.sidebar.warning("Not in filtered list")
 
     with nav_col5:
-        # Filter button - compact
+        # Search annotations with enter key support
+        def do_annotation_search():
+            search_text = st.session_state.get('search_annotation_input', '')
+            if search_text and search_text.strip():
+                search_lower = search_text.lower()
+                matching_indices = []
+
+                # Search metaphor annotations
+                for idx, text in st.session_state.metaphor_annotation.items():
+                    if text and search_lower in text.lower():
+                        matching_indices.append(idx)
+
+                # Search conversation annotations
+                for idx, text in st.session_state.convo_annotation.items():
+                    if text and search_lower in text.lower():
+                        if idx not in matching_indices:
+                            matching_indices.append(idx)
+
+                # Search highlights text
+                for idx, highlights in st.session_state.highlights.items():
+                    for hl in highlights:
+                        hl_text = hl.get('text', '')
+                        if hl_text and search_lower in hl_text.lower():
+                            if idx not in matching_indices:
+                                matching_indices.append(idx)
+                            break
+
+                if matching_indices:
+                    st.session_state.search_annotation_matches = sorted(matching_indices)
+                    st.session_state.search_annotation_current = 0
+                    st.session_state.search_annotation_text = search_text
+                    st.session_state.trigger_annotation_search = True
+                else:
+                    st.session_state.search_annotation_matches = []
+                    st.session_state.no_annotation_matches = True
+
+        search_annotation = st.text_input(
+            "Search annotations",
+            value=st.session_state.get('search_annotation_text', ''),
+            placeholder="Search annotations (press Enter)...",
+            label_visibility="collapsed",
+            key="search_annotation_input",
+            on_change=do_annotation_search
+        )
+
+        # Handle search trigger
+        if st.session_state.get('trigger_annotation_search'):
+            st.session_state.trigger_annotation_search = False
+            matches = st.session_state.search_annotation_matches
+            if matches:
+                first_match = matches[0]
+                if first_match in index_mapping:
+                    st.session_state.current_idx = index_mapping.index(first_match)
+                    st.toast(f"Found {len(matches)} match(es)", icon="🔍")
+                    st.rerun()
+                else:
+                    st.sidebar.warning("Match not in current filtered list")
+
+        if st.session_state.get('no_annotation_matches'):
+            st.session_state.no_annotation_matches = False
+            st.sidebar.warning("No matches found in annotations")
+
+    with nav_col6:
+        # Filter button - show annotated only
         if 'show_annotated_only' not in st.session_state:
             st.session_state.show_annotated_only = False
 
-        btn_label = "Show all" if st.session_state.show_annotated_only else "Annotated only"
+        btn_label = "Show All" if st.session_state.show_annotated_only else "Show Annotated"
         if st.button(btn_label, key="filter_annotated_btn", use_container_width=True):
             st.session_state.show_annotated_only = not st.session_state.show_annotated_only
+            # Reset other filters when toggling
+            if st.session_state.show_annotated_only:
+                st.session_state.show_starred_only = False
             st.rerun()
 
-    with nav_col6:
+    with nav_col7:
+        # Star filter button - using unicode star
+        star_btn_label = "\u2606" if not st.session_state.show_starred_only else "\u2605"  # hollow vs filled
+        star_btn_type = "secondary" if not st.session_state.show_starred_only else "primary"
+        if st.button(star_btn_label, key="filter_starred_btn", type=star_btn_type, use_container_width=True):
+            st.session_state.show_starred_only = not st.session_state.show_starred_only
+            # Reset other filters when toggling
+            if st.session_state.show_starred_only:
+                st.session_state.show_annotated_only = False
+            st.rerun()
+
+    with nav_col8:
         # Direct download button - prepares and downloads in one step
         export_df = df.copy()
         export_df['metaphor_annotate'] = ""
         export_df['convo_history_annotate'] = ""
         export_df['conversation_highlights'] = ""
+        export_df['starred'] = False
 
         for idx, annotation in st.session_state.metaphor_annotation.items():
             if idx < len(export_df):
@@ -302,15 +412,63 @@ def main():
             if idx < len(export_df):
                 export_df.at[idx, 'conversation_highlights'] = json.dumps(highlights)
 
+        # Add starred column
+        for idx in st.session_state.starred:
+            if idx < len(export_df):
+                export_df.at[idx, 'starred'] = True
+
         csv_data = export_df.to_csv(index=False)
 
         st.download_button(
-            label="💾 Download CSV",
+            label="💾 Download",
             data=csv_data,
             file_name=output_file,
             mime="text/csv",
             type="primary"
         )
+
+    # Show search results navigation if we have matches (below the main row)
+    if st.session_state.get('search_annotation_matches'):
+        matches = st.session_state.search_annotation_matches
+        current = st.session_state.get('search_annotation_current', 0)
+
+        # Aligned with the new 7-column layout: matches appear under search/annotated/download area
+        nav_result_cols = st.columns([0.5, 0.8, 0.5, 1.5, 2.5, 1.2, 1.5])
+
+        with nav_result_cols[4]:
+            # Center the match info in the search column area
+            match_cols = st.columns([1, 2, 1])
+            with match_cols[1]:
+                match_text = f"Match {current + 1}/{len(matches)}"
+                st.markdown(f"<p style='text-align: center; margin: 0; padding-top: 6px; font-size: 0.8em; color: #666;'>{match_text}</p>", unsafe_allow_html=True)
+
+        with nav_result_cols[5]:
+            prev_disabled = current <= 0
+            next_disabled = current >= len(matches) - 1
+
+            prev_next_cols = st.columns([1, 1])
+            with prev_next_cols[0]:
+                if st.button("‹", use_container_width=True, key="anno_prev_btn", disabled=prev_disabled):
+                    st.session_state.search_annotation_current = current - 1
+                    prev_match = matches[current - 1]
+                    if prev_match in index_mapping:
+                        st.session_state.current_idx = index_mapping.index(prev_match)
+                        st.rerun()
+
+            with prev_next_cols[1]:
+                if st.button("›", use_container_width=True, key="anno_next_btn", disabled=next_disabled):
+                    st.session_state.search_annotation_current = current + 1
+                    next_match = matches[current + 1]
+                    if next_match in index_mapping:
+                        st.session_state.current_idx = index_mapping.index(next_match)
+                        st.rerun()
+
+        with nav_result_cols[6]:
+            if st.button("Clear", use_container_width=True, key="clear_anno_search"):
+                st.session_state.search_annotation_matches = []
+                st.session_state.search_annotation_current = 0
+                st.session_state.search_annotation_text = ""
+                st.rerun()
 
     st.markdown("---")
 
@@ -318,7 +476,36 @@ def main():
     meta_header_col1, meta_header_col2, meta_header_col3 = st.columns([5, 3, 1.2])
 
     with meta_header_col1:
-        st.markdown("**Metadata**")
+        # Metadata title with star button inline - star on the left
+        meta_cols = st.columns([0.15, 1])
+        with meta_cols[0]:
+            # Star button - toggle star status for current record with yellow styling via CSS
+            is_starred = original_idx in st.session_state.starred
+            star_label = "\u2605" if is_starred else "\u2606"  # filled vs hollow star
+
+            # Inject custom CSS for star button color and alignment - target only this button
+            st.markdown(f"""
+            <style>
+            div[data-testid="stButton"] > button[key="star_btn_{original_idx}"] {{
+                background-color: #FFFACD !important;
+                border: 1px solid #DAA520 !important;
+                color: #333 !important;
+                min-height: 28px !important;
+                padding: 0px 8px !important;
+            }}
+            </style>
+            """, unsafe_allow_html=True)
+
+            if st.button(star_label, key=f"star_btn_{original_idx}", type="secondary", use_container_width=True):
+                if is_starred:
+                    st.session_state.starred.discard(original_idx)
+                    st.toast("Unstarred")
+                else:
+                    st.session_state.starred.add(original_idx)
+                    st.toast("Starred!")
+                st.rerun()
+        with meta_cols[1]:
+            st.markdown("<p style='margin: 0; padding-top: 2px;'><b>Metadata</b></p>", unsafe_allow_html=True)
 
     with meta_header_col2:
         pass  # Spacer to push button to the right
@@ -326,7 +513,7 @@ def main():
     with meta_header_col3:
         # Toggle button for showing/hiding labeled condition and user intention
         if 'show_colored_fields' not in st.session_state:
-            st.session_state.show_colored_fields = True
+            st.session_state.show_colored_fields = False
 
         toggle_label = "Hide" if st.session_state.show_colored_fields else "Show"
         if st.button(f"{toggle_label} Labels", key="toggle_labels_btn"):
@@ -402,7 +589,7 @@ def main():
             st.markdown(f"<small><b>ID:</b> {value}</small>", unsafe_allow_html=True)
 
     # Only show Intention and Label Condition if toggle is on
-    show_colored = st.session_state.get('show_colored_fields', True)
+    show_colored = st.session_state.get('show_colored_fields', False)
 
     with meta_cols[2]:
         if show_colored:
@@ -468,48 +655,7 @@ def main():
 
     st.markdown("---")
 
-    # ROW 3: Metaphor Annotation (65% / 35% split)
-    metaphor_data_col, metaphor_note_col = st.columns([0.65, 0.35])
-
-    with metaphor_data_col:
-        st.markdown("**Metaphor**")
-        meta_col1, meta_col2 = st.columns([1, 1])
-
-        with meta_col1:
-            st.markdown("*AI Metaphor:*")
-            ai_metaphor = format_value(row.get('ai_metaphor', 'N/A'))
-            st.markdown(f"<div style='background-color: #f5f5f5; padding: 10px; border-radius: 5px; font-size: 0.9em;'>{ai_metaphor}</div>", unsafe_allow_html=True)
-
-        with meta_col2:
-            st.markdown("*Metaphor Rationale:*")
-            metaphor_rationale = format_value(row.get('metaphor_rationale', 'N/A'))
-            st.markdown(f"<div style='background-color: #f5f5f5; padding: 10px; border-radius: 5px; font-size: 0.9em;'>{metaphor_rationale}</div>", unsafe_allow_html=True)
-
-    with metaphor_note_col:
-        st.markdown("**Your Annotation**")
-        default_metaphor = st.session_state.metaphor_annotation.get(original_idx, "")
-        metaphor_annotation = st.text_area(
-            "Metaphor annotation",
-            value=default_metaphor,
-            height=200,
-            key=f"metaphor_input_{original_idx}",
-            placeholder="Enter annotation...",
-            label_visibility="collapsed"
-        )
-        st.session_state.metaphor_annotation[original_idx] = metaphor_annotation
-
-        btn_col1, btn_col2 = st.columns([1, 1])
-        with btn_col1:
-            if st.button("Save", key=f"save_met_btn_{original_idx}"):
-                st.toast("Saved!", icon="✅")
-        with btn_col2:
-            if st.button("Clear", key=f"clear_met_btn_{original_idx}"):
-                st.session_state.metaphor_annotation[original_idx] = ""
-                st.rerun()
-
-    st.markdown("---")
-
-    # ROW 4: Conversation History (65% / 35% split)
+    # ROW 3: Conversation History (65% / 35% split) - NOW FIRST
     convo_data_col, convo_note_col = st.columns([0.65, 0.35])
 
     with convo_data_col:
@@ -624,7 +770,7 @@ def main():
             st.warning("Conversation history column not found.")
 
     with convo_note_col:
-        st.markdown("**Your Annotation**")
+        st.markdown("**Notes**")
         default_convo = st.session_state.convo_annotation.get(original_idx, "")
         convo_annotation = st.text_area(
             "Conversation annotation",
@@ -687,6 +833,47 @@ def main():
                         f"</div>",
                         unsafe_allow_html=True
                     )
+
+    st.markdown("---")
+
+    # ROW 4: Metaphor Annotation (65% / 35% split) - NOW LAST
+    metaphor_data_col, metaphor_note_col = st.columns([0.65, 0.35])
+
+    with metaphor_data_col:
+        st.markdown("**Metaphor**")
+        meta_col1, meta_col2 = st.columns([1, 1])
+
+        with meta_col1:
+            st.markdown("*AI Metaphor:*")
+            ai_metaphor = format_value(row.get('ai_metaphor', 'N/A'))
+            st.markdown(f"<div style='background-color: #f5f5f5; padding: 10px; border-radius: 5px; font-size: 0.9em;'>{ai_metaphor}</div>", unsafe_allow_html=True)
+
+        with meta_col2:
+            st.markdown("*Metaphor Rationale:*")
+            metaphor_rationale = format_value(row.get('metaphor_rationale', 'N/A'))
+            st.markdown(f"<div style='background-color: #f5f5f5; padding: 10px; border-radius: 5px; font-size: 0.9em;'>{metaphor_rationale}</div>", unsafe_allow_html=True)
+
+    with metaphor_note_col:
+        st.markdown("**Notes**")
+        default_metaphor = st.session_state.metaphor_annotation.get(original_idx, "")
+        metaphor_annotation = st.text_area(
+            "Metaphor annotation",
+            value=default_metaphor,
+            height=80,
+            key=f"metaphor_input_{original_idx}",
+            placeholder="Enter annotation...",
+            label_visibility="collapsed"
+        )
+        st.session_state.metaphor_annotation[original_idx] = metaphor_annotation
+
+        btn_col1, btn_col2 = st.columns([1, 1])
+        with btn_col1:
+            if st.button("Save", key=f"save_met_btn_{original_idx}"):
+                st.toast("Saved!", icon="✅")
+        with btn_col2:
+            if st.button("Clear", key=f"clear_met_btn_{original_idx}"):
+                st.session_state.metaphor_annotation[original_idx] = ""
+                st.rerun()
 
 
 if __name__ == "__main__":
