@@ -420,7 +420,7 @@ def main():
         csv_data = export_df.to_csv(index=False)
 
         st.download_button(
-            label="💾 Download",
+            label="💾 Download CSV",
             data=csv_data,
             file_name=output_file,
             mime="text/csv",
