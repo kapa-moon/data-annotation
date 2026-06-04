@@ -91,6 +91,21 @@ def get_annotated_indices_fast(metaphor_dict, convo_dict, highlights_dict, df_le
     return sorted(metaphor_keys | convo_keys | highlight_keys)
 
 
+def load_text_annotations_from_df(df):
+    """Load metaphor and conversation annotation columns from a dataframe."""
+    if 'metaphor_annotate' in df.columns:
+        for idx, row_data in df.iterrows():
+            val = row_data.get('metaphor_annotate', '')
+            if pd.notna(val) and str(val).strip():
+                st.session_state.metaphor_annotation[idx] = str(val)
+
+    if 'convo_history_annotate' in df.columns:
+        for idx, row_data in df.iterrows():
+            val = row_data.get('convo_history_annotate', '')
+            if pd.notna(val) and str(val).strip():
+                st.session_state.convo_annotation[idx] = str(val)
+
+
 def main():
     # Initialize session state
     if 'metaphor_annotation' not in st.session_state:
@@ -109,6 +124,8 @@ def main():
         st.session_state.show_starred_only = False
     if 'starred_loaded' not in st.session_state:
         st.session_state.starred_loaded = False
+    if 'annotations_loaded' not in st.session_state:
+        st.session_state.annotations_loaded = False
 
     # Sidebar
     with st.sidebar:
@@ -144,6 +161,7 @@ def main():
                     st.session_state.starred = set()
                     st.session_state.show_starred_only = False
                     st.session_state.starred_loaded = False
+                    st.session_state.annotations_loaded = False
 
                     st.success(f"Loaded {len(uploaded_df)} records!")
                     st.rerun()
@@ -170,6 +188,7 @@ def main():
                 st.session_state.starred = set()
                 st.session_state.show_starred_only = False
                 st.session_state.starred_loaded = False
+                st.session_state.annotations_loaded = False
 
                 st.rerun()
         else:
@@ -201,8 +220,10 @@ def main():
             st.error(f"Error loading file: {e}")
             return
 
-    # Load highlights lazily - only for current record when needed
-    # Don't load all highlights on startup for large datasets
+    # Load text annotations from CSV once per data source
+    if not st.session_state.get('annotations_loaded', False):
+        load_text_annotations_from_df(df)
+        st.session_state.annotations_loaded = True
 
     # Handle filtering for annotated or starred records
     if st.session_state.get('show_starred_only', False):
