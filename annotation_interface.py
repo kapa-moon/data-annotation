@@ -106,6 +106,24 @@ def load_text_annotations_from_df(df):
                 st.session_state.convo_annotation[idx] = str(val)
 
 
+def clear_annotation_widget_keys():
+    """Remove stale text_area widget keys so re-uploaded notes display correctly."""
+    for key in list(st.session_state.keys()):
+        if isinstance(key, str) and (
+            key.startswith('convo_input_') or key.startswith('metaphor_input_')
+        ):
+            del st.session_state[key]
+
+
+def init_annotation_widget(widget_key, annotation_dict, record_idx):
+    """Initialize a text_area widget from loaded annotation data."""
+    loaded = annotation_dict.get(record_idx, "")
+    if widget_key not in st.session_state:
+        st.session_state[widget_key] = loaded
+    elif loaded and not st.session_state[widget_key]:
+        st.session_state[widget_key] = loaded
+
+
 def main():
     # Initialize session state
     if 'metaphor_annotation' not in st.session_state:
@@ -156,6 +174,7 @@ def main():
                     st.session_state.metaphor_annotation = {}
                     st.session_state.convo_annotation = {}
                     st.session_state.highlights = {}
+                    clear_annotation_widget_keys()
                     st.session_state.current_idx = 0
                     st.session_state.active_highlight_msg = None
                     st.session_state.starred = set()
@@ -183,6 +202,7 @@ def main():
                 st.session_state.metaphor_annotation = {}
                 st.session_state.convo_annotation = {}
                 st.session_state.highlights = {}
+                clear_annotation_widget_keys()
                 st.session_state.current_idx = 0
                 st.session_state.active_highlight_msg = None
                 st.session_state.starred = set()
@@ -792,12 +812,12 @@ def main():
 
     with convo_note_col:
         st.markdown("**Notes**")
-        default_convo = st.session_state.convo_annotation.get(original_idx, "")
+        convo_key = f"convo_input_{original_idx}"
+        init_annotation_widget(convo_key, st.session_state.convo_annotation, original_idx)
         convo_annotation = st.text_area(
             "Conversation annotation",
-            value=default_convo,
             height=200,
-            key=f"convo_input_{original_idx}",
+            key=convo_key,
             placeholder="Enter annotation...",
             label_visibility="collapsed"
         )
@@ -810,6 +830,7 @@ def main():
         with btn_col2:
             if st.button("Clear", key=f"clear_convo_btn_{original_idx}"):
                 st.session_state.convo_annotation[original_idx] = ""
+                st.session_state[convo_key] = ""
                 st.rerun()
 
         # Show current highlights summary
@@ -876,12 +897,12 @@ def main():
 
     with metaphor_note_col:
         st.markdown("**Notes**")
-        default_metaphor = st.session_state.metaphor_annotation.get(original_idx, "")
+        metaphor_key = f"metaphor_input_{original_idx}"
+        init_annotation_widget(metaphor_key, st.session_state.metaphor_annotation, original_idx)
         metaphor_annotation = st.text_area(
             "Metaphor annotation",
-            value=default_metaphor,
             height=80,
-            key=f"metaphor_input_{original_idx}",
+            key=metaphor_key,
             placeholder="Enter annotation...",
             label_visibility="collapsed"
         )
@@ -894,6 +915,7 @@ def main():
         with btn_col2:
             if st.button("Clear", key=f"clear_met_btn_{original_idx}"):
                 st.session_state.metaphor_annotation[original_idx] = ""
+                st.session_state[metaphor_key] = ""
                 st.rerun()
 
 
